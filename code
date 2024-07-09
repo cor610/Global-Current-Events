@@ -1,0 +1,101 @@
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+import nltk
+from nltk.tokenize import sent_tokenize
+from nltk.corpus import stopwords
+from nltk.probability import FreqDist
+import heapq
+from datetime import datetime, timedelta
+
+# Download necessary NLTK data
+nltk.download('punkt')
+nltk.download('stopwords')
+
+def get_google_alerts(country):
+    # Replace this URL with the actual RSS feed URL for your Google Alert
+    rss_url = f"https://www.google.com/alerts/feeds/your_alert_id/{country.replace(' ', '+')}"
+    feed = feedparser.parse(rss_url)
+    
+    alerts = []
+    for entry in feed.entries:
+        alerts.append({
+            'title': entry.title,
+            'content': entry.summary,
+            'link': entry.link,
+            'published': entry.published_parsed
+        })
+    return alerts
+
+def clean_html(html_content):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    return soup.get_text()
+
+def process_alert(alert_text):
+    # Clean the text
+    clean_text = clean_html(alert_text)
+    
+    # Tokenize sentences
+    sentences = sent_tokenize(clean_text)
+    
+    # Calculate word frequencies
+    stop_words = set(stopwords.words('english'))
+    words = nltk.word_tokenize(clean_text.lower())
+    word_frequencies = FreqDist(word for word in words if word not in stop_words)
+    
+    # Score sentences
+    sentence_scores = {}
+    for sentence in sentences:
+        for word in nltk.word_tokenize(sentence.lower()):
+            if word in word_frequencies:
+                if sentence not in sentence_scores:
+                    sentence_scores[sentence] = word_frequencies[word]
+                else:
+                    sentence_scores[sentence] += word_frequencies[word]
+    
+    # Get top sentences
+    summary_sentences = heapq.nlargest(2, sentence_scores, key=sentence_scores.get)
+    summary = ' '.join(summary_sentences)
+    return summary
+
+def get_climate_events(country):
+    alerts = get_google_alerts(country)
+    events = []
+    for alert in alerts:
+        # Check if the alert is within the last week
+        if datetime(*alert['published'][:6]) > datetime.now() - timedelta(days=7):
+            summary = process_alert(alert['content'])
+            events.append({
+                'title': alert['title'],
+                'summary': summary,
+                'source': alert['link']
+            })
+    return events[:3]  # Return top 3 most impactful events
+
+def climate_event_summary(countries):
+    results = {}
+    for country in countries:
+        try:
+            events = get_climate_events(country)
+            results[country] = events
+        except Exception as e:
+            print(f"Error processing {country}: {str(e)}")
+            results[country] = []
+    return results
+
+# Example usage
+if __name__ == "__main__":
+    countries = ['United States', 'China', 'India', 'Brazil', 'Australia']
+    summaries = climate_event_summary(countries)
+
+    for country, events in summaries.items():
+        print(f"\n## {country}")
+        if events:
+            for i, event in enumerate(events, 1):
+                print(f"### Event {i}")
+                print(f"Title: {event['title']}")
+                print(f"Summary: {event['summary']}")
+                print(f"Source: {event['source']}")
+                print()
+        else:
+            print("No recent climate events found.")
